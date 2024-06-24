@@ -28,8 +28,8 @@ class RNNNSAgent(nn.Module):
                 qs.append(q)
             return th.cat(qs), th.cat(hiddens).unsqueeze(0)
         else:
+            inputs = inputs.view(-1, self.n_agents, self.input_shape)
             for i in range(self.n_agents):
-                inputs = inputs.view(-1, self.n_agents, self.input_shape)
                 q, h = self.agents[i](inputs[:, i], hidden_state[:, i])
                 hiddens.append(h.unsqueeze(1))
                 qs.append(q.unsqueeze(1))

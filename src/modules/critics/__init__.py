@@ -6,6 +6,7 @@ from .maddpg import MADDPGCritic
 from .maddpg_ns import MADDPGCriticNS
 from .ac import ACCritic
 from .ac_ns import ACCriticNS
+from .ac_es import ACCriticExperienceSharing
 
 
 REGISTRY = {}
@@ -18,6 +19,7 @@ REGISTRY["maddpg_critic"] = MADDPGCritic
 REGISTRY["maddpg_critic_ns"] = MADDPGCriticNS
 REGISTRY["ac_critic"] = ACCritic
 REGISTRY["ac_critic_ns"] = ACCriticNS
+REGISTRY["ac_critic_es"] = ACCriticExperienceSharing
 
 
 def register_pac_critics():
