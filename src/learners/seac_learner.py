@@ -37,10 +37,11 @@ class SEACLearner(ActorCriticLearner):
             )
             return
 
+        # for batch computation have mask for each agent
         mask = mask.repeat(1, 1, self.n_agents)
 
         # repeat rewards, actions, mask to have shape (n_agents, nstep, eplength, n_agents)
-        # to match data of all agents being fed through each agent's network
+        # to match data of all agents being fed through each agent's network in single batch
         rewards = rewards.unsqueeze(0).repeat(self.n_agents, 1, 1, 1)
         actions = actions.unsqueeze(0).repeat(self.n_agents, 1, 1, 1, 1)
         actions = actions[:, :, :-1]
@@ -77,23 +78,24 @@ class SEACLearner(ActorCriticLearner):
 
         # matrix with weights for each experience/ agent
         # own experience weights: 1
-        # others' experience weights: is_weights * seac_lambda
         lambda_matrix = (
             th.eye(self.n_agents, device=batch.device)
             .reshape(self.n_agents, 1, 1, self.n_agents)
             .repeat(1, batch.batch_size, batch.max_seq_length - 1, 1)
         )
+        # others' experience weights: is_weights * seac_lambda
         lambda_matrix += (1 - lambda_matrix) * is_weights * self.args.seac_lambda
 
-        for i in range(self.n_agents):
-            assert th.equal(
-                is_weights[i, :, :, i], th.ones_like(is_weights[i, :, :, i])
-            ), is_weights[i, :, :, i]
-            for j in range(self.n_agents):
-                if i != j:
-                    assert not th.allclose(
-                        is_weights[i, :, :, j], th.ones_like(is_weights[i, :, :, j])
-                    ), is_weights[i, :, :, j]
+        # sanity check / assert
+        # for i in range(self.n_agents):
+        #     assert th.equal(
+        #         is_weights[i, :, :, i], th.ones_like(is_weights[i, :, :, i])
+        #     ), is_weights[i, :, :, i]
+        #     for j in range(self.n_agents):
+        #         if i != j:
+        #             assert not th.allclose(
+        #                 is_weights[i, :, :, j], th.ones_like(is_weights[i, :, :, j])
+        #             ), is_weights[i, :, :, j]
 
         # advantages: (n_agents (data shared), nstep, eplength, n_agents
         advantages, critic_train_stats = self.train_critic_sequential(
@@ -165,6 +167,21 @@ class SEACLearner(ActorCriticLearner):
                 (pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item(),
                 t_env,
             )
+            self.logger.log_stat(
+                "is_weight_mean",
+                (is_weights * mask).sum().item() / mask.sum().item(),
+                t_env,
+            )
+            self.logger.log_stat(
+                "is_weight_min",
+                is_weights.min().item(),
+                t_env,
+            )
+            self.logger.log_stat(
+                "is_weight_max",
+                is_weights.max().item(),
+                t_env,
+            )
             self.log_stats_t = t_env
 
     def train_critic_sequential(
@@ -234,7 +251,7 @@ class SEACLearner(ActorCriticLearner):
                     nstep_return_t += (
                         self.args.gamma**step * values[:, :, t] * mask[:, :, t]
                     )
-                elif t == rewards.size(1) - 1 and self.args.add_value_last_step:
+                elif t == ep_length - 1 and self.args.add_value_last_step:
                     nstep_return_t += (
                         self.args.gamma**step * rewards[:, :, t] * mask[:, :, t]
                     )

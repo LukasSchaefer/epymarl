@@ -47,13 +47,17 @@ class ExperienceSharingMAC(NonSharedMAC):
             .repeat(self.n_agents, 1, 1)
             .reshape(batch_size * self.n_agents, -1)
         )
-        avail_actions = avail_actions.repeat(self.n_agents, 1, 1, 1).reshape(
-            batch_size, self.n_agents, -1
-        )
-        if self.hidden_states is not None and self.hidden_states.size(0) < batch_size:
-            # need to initialise hidden states for expanded all agent batch
-            self.hidden_states = self.init_hidden(batch_size)
 
+        # for i in range(self.n_agents):
+        #     for j in range(self.n_agents):
+        #         assert th.equal(
+        #             agent_inputs[i * batch_size : (i + 1) * batch_size],
+        #             agent_inputs[j * batch_size : (j + 1) * batch_size],
+        #         )
+
+        avail_actions = avail_actions.repeat(self.n_agents, 1, 1, 1).reshape(
+            self.n_agents, batch_size, -1
+        )
         agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
 
         # Softmax the agent outputs if they're policy logits
