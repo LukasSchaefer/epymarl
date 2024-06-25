@@ -76,6 +76,10 @@ class SEACLearner(ActorCriticLearner):
             is_weights.append(th.exp(log_probs_taken[i] - original_log_probs_taken))
         is_weights = th.stack(is_weights, dim=0).detach()
 
+        if self.args.seac_retrace_is:
+            # use retrace IS weights / clip to avoid large weights
+            is_weights = th.min(is_weights, th.ones_like(is_weights))
+
         # matrix with weights for each experience/ agent
         # own experience weights: 1
         lambda_matrix = (

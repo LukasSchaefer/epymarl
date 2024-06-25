@@ -23,6 +23,7 @@ agent_output_type: "pi_logits"
 learner: "seac_learner"
 critic_type: "ac_critic_es"
 seac_lambda: 1.0
+seac_retrace_is: False
 entropy_coef: 0.001
 standardise_returns: False
 standardise_rewards: True
