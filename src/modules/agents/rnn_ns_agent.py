@@ -33,7 +33,8 @@ class RNNNSAgent(nn.Module):
                 q, h = self.agents[i](inputs[:, i], hidden_state[:, i])
                 hiddens.append(h.unsqueeze(1))
                 qs.append(q.unsqueeze(1))
-            return th.cat(qs, dim=-1).view(-1, q.size(-1)), th.cat(hiddens, dim=1)
+            out_dim = qs[0].size(-1)
+            return th.cat(qs, dim=1).view(-1, out_dim), th.cat(hiddens, dim=1)
 
     def cuda(self, device="cuda:0"):
         for a in self.agents:

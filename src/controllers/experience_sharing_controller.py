@@ -42,32 +42,32 @@ class ExperienceSharingMAC(NonSharedMAC):
         avail_actions = ep_batch["avail_actions"][:, t]
 
         # repeat data for all agents in the batch
-        agent_inputs = (
-            agent_inputs.unsqueeze(0)
-            .repeat(self.n_agents, 1, 1)
-            .reshape(batch_size * self.n_agents, -1)
+        # from (batch_size * n_agents, input_shape) to (batch_size * n_agents, n_agents, input_shape)
+        agent_inputs = agent_inputs.unsqueeze(1).repeat(1, self.n_agents, 1)
+
+        # available actions as (batch_size, n_agents, n_actions) to (batch_size * n_agents, n_agents, n_actions)
+        avail_actions = (
+            avail_actions.unsqueeze(-2)
+            .repeat(1, 1, self.n_agents, 1)
+            .reshape(batch_size, self.n_agents, -1)
         )
 
-        # for i in range(self.n_agents):
-        #     for j in range(self.n_agents):
-        #         assert th.equal(
-        #             agent_inputs[i * batch_size : (i + 1) * batch_size],
-        #             agent_inputs[j * batch_size : (j + 1) * batch_size],
-        #         )
-
-        avail_actions = avail_actions.repeat(self.n_agents, 1, 1, 1).reshape(
-            self.n_agents, batch_size, -1
-        )
+        # return action logits as (batch_size * n_agents * n_agents, n_actions)
+        # and hidden states as (batch_size * n_agents, n_agents, hidden_size)
         agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
+        agent_outs = agent_outs.view(batch_size, self.n_agents, -1)
 
         # Softmax the agent outputs if they're policy logits
         if self.agent_output_type == "pi_logits":
             if getattr(self.args, "mask_before_softmax", True):
                 # Make the logits for unavailable actions very negative to minimise their affect on the softmax
-                reshaped_avail_actions = avail_actions.reshape(
-                    batch_size * self.n_agents, -1
-                )
-                agent_outs[reshaped_avail_actions == 0] = -1e10
+                agent_outs[avail_actions == 0] = -1e10
 
             agent_outs = th.nn.functional.softmax(agent_outs, dim=-1)
-        return agent_outs.view(self.n_agents, ep_batch.batch_size, self.n_agents, -1)
+
+        # Action probs at (:, :, i, :) comes from agent i's policy!
+        agent_outs = agent_outs.view(
+            self.n_agents, ep_batch.batch_size, self.n_agents, -1
+        )
+
+        return agent_outs

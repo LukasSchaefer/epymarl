@@ -1,3 +1,4 @@
+from einops import rearrange
 import torch as th
 
 from components.episode_buffer import EpisodeBatch
@@ -40,21 +41,30 @@ class SEACLearner(ActorCriticLearner):
         # for batch computation have mask for each agent
         mask = mask.repeat(1, 1, self.n_agents)
 
-        # repeat rewards, actions, mask to have shape (n_agents, nstep, eplength, n_agents)
-        # to match data of all agents being fed through each agent's network in single batch
-        rewards = rewards.unsqueeze(0).repeat(self.n_agents, 1, 1, 1)
-        actions = actions.unsqueeze(0).repeat(self.n_agents, 1, 1, 1, 1)
-        actions = actions[:, :, :-1]
-        mask = mask.unsqueeze(0).repeat(self.n_agents, 1, 1, 1)
-
+        # reshape/ repeat from (nstep, eplength, n_agents) to (n_agents, nstep, eplength, n_agents)
+        # to match data of all agents being fed through each agent's network in single batch with
+        # entry [i, :, :, :, :] being the data of agent i
+        rewards = rearrange(
+            rewards, "nstep eplength n_agents -> n_agents nstep eplength 1"
+        ).repeat(1, 1, 1, self.n_agents)
+        actions = rearrange(
+            actions, "nstep eplength n_agents 1 -> n_agents nstep eplength 1 1"
+        ).repeat(1, 1, 1, self.n_agents, 1)[:, :, :-1]
+        mask = rearrange(
+            mask, "nstep eplength n_agents -> n_agents nstep eplength 1"
+        ).repeat(1, 1, 1, self.n_agents)
+        
         critic_mask = mask.clone()
 
         mac_out = []
         # forward pass for each agent using data of all agents!
         self.mac.init_hidden(batch.batch_size * self.n_agents)
         for t in range(batch.max_seq_length - 1):
+            # (n_agents, nstep, n_agents, n_actions)
             agent_outs = self.mac.forward(batch, t=t, all_agents=True)
             mac_out.append(agent_outs)
+        # (n_agents, nstep, eplength, n_agents, n_actions) with
+        # [i, :, :, j, :] being the output of agent j for the experience of agent i
         mac_out = th.stack(mac_out, dim=2)  # Concat over time
 
         # mask out terminated timesteps

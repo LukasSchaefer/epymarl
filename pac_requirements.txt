@@ -1,2 +1,1 @@
-einops
 torch_scatter
