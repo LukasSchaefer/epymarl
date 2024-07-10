@@ -88,7 +88,9 @@ class SEACLearner(ActorCriticLearner):
 
         if self.args.seac_retrace_is:
             # use retrace IS weights / clip to avoid large weights
-            is_weights = th.min(is_weights, th.ones_like(is_weights))
+            is_weights_clipped = th.min(is_weights, th.ones_like(is_weights))
+        else:
+            is_weights_clipped = is_weights
 
         # matrix with weights for each experience/ agent
         # own experience weights: 1
@@ -98,7 +100,7 @@ class SEACLearner(ActorCriticLearner):
             .repeat(1, batch.batch_size, batch.max_seq_length - 1, 1)
         )
         # others' experience weights: is_weights * seac_lambda
-        lambda_matrix += (1 - lambda_matrix) * is_weights * self.args.seac_lambda
+        lambda_matrix += (1 - lambda_matrix) * is_weights_clipped * self.args.seac_lambda
 
         # sanity check / assert
         # for i in range(self.n_agents):

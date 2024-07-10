@@ -56,7 +56,7 @@ class ExperienceSharingMAC(NonSharedMAC):
         # and hidden states as (batch_size * n_agents, n_agents, hidden_size)
         agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
         agent_outs = agent_outs.view(batch_size, self.n_agents, -1)
-
+        
         # Softmax the agent outputs if they're policy logits
         if self.agent_output_type == "pi_logits":
             if getattr(self.args, "mask_before_softmax", True):
@@ -65,7 +65,7 @@ class ExperienceSharingMAC(NonSharedMAC):
 
             agent_outs = th.nn.functional.softmax(agent_outs, dim=-1)
 
-        # Action probs at (:, :, i, :) comes from agent i's policy!
+        # Action probs at (j, :, i, :) is from agent i's policy for data of agent j
         agent_outs = agent_outs.view(
             self.n_agents, ep_batch.batch_size, self.n_agents, -1
         )

@@ -63,6 +63,7 @@ class NonSharedMAC:
         # Other MACs might want to e.g. delegate building inputs to each agent
         bs = batch.batch_size
         inputs = []
+        # inputs of shape (batch_size, eplength + 1, n_agents, -1)
         inputs.append(batch["obs"][:, t])  # b1av
         if self.args.obs_last_action:
             if t == 0:
