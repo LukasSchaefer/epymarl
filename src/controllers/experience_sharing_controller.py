@@ -37,25 +37,20 @@ class ExperienceSharingMAC(NonSharedMAC):
             return super().forward(ep_batch, t, test_mode)
 
         # forward pass for data of all agents in the batch
-        batch_size = ep_batch.batch_size * self.n_agents
         agent_inputs = self._build_inputs(ep_batch, t)
         avail_actions = ep_batch["avail_actions"][:, t]
-
+        
         # repeat data for all agents in the batch
         # from (batch_size * n_agents, input_shape) to (batch_size * n_agents, n_agents, input_shape)
         agent_inputs = agent_inputs.unsqueeze(1).repeat(1, self.n_agents, 1)
 
-        # available actions as (batch_size, n_agents, n_actions) to (batch_size * n_agents, n_agents, n_actions)
-        avail_actions = (
-            avail_actions.unsqueeze(-2)
-            .repeat(1, 1, self.n_agents, 1)
-            .reshape(batch_size, self.n_agents, -1)
-        )
+        # available actions as (batch_size, n_agents, n_actions) to (batch_size, n_agents, n_agents, n_actions)
+        avail_actions = avail_actions.unsqueeze(-2).repeat(1, 1, self.n_agents, 1)
 
         # return action logits as (batch_size * n_agents * n_agents, n_actions)
         # and hidden states as (batch_size * n_agents, n_agents, hidden_size)
         agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
-        agent_outs = agent_outs.view(batch_size, self.n_agents, -1)
+        agent_outs = agent_outs.view(ep_batch.batch_size, self.n_agents, self.n_agents, -1)
         
         # Softmax the agent outputs if they're policy logits
         if self.agent_output_type == "pi_logits":
@@ -65,9 +60,5 @@ class ExperienceSharingMAC(NonSharedMAC):
 
             agent_outs = th.nn.functional.softmax(agent_outs, dim=-1)
 
-        # Action probs at (j, :, i, :) is from agent i's policy for data of agent j
-        agent_outs = agent_outs.view(
-            self.n_agents, ep_batch.batch_size, self.n_agents, -1
-        )
-
-        return agent_outs
+        # Action probs at (:, j, i, :) is from agent i's policy for data of agent j
+        return agent_outs.view(ep_batch.batch_size, self.n_agents, self.n_agents, -1)

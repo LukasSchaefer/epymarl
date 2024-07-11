@@ -1,4 +1,3 @@
-from einops import rearrange
 import torch as th
 
 from components.episode_buffer import EpisodeBatch
@@ -41,18 +40,12 @@ class SEACLearner(ActorCriticLearner):
         # for batch computation have mask for each agent
         mask = mask.repeat(1, 1, self.n_agents)
 
-        # reshape/ repeat from (nstep, eplength, n_agents) to (n_agents, nstep, eplength, n_agents)
+        # reshape/ repeat from (batch_size, eplength, n_agents) to (batch_size, eplength, n_agents, n_agents)
         # to match data of all agents being fed through each agent's network in single batch with
-        # entry [i, :, :, :, :] being the data of agent i
-        rewards = rearrange(
-            rewards, "nstep eplength n_agents -> n_agents nstep eplength 1"
-        ).repeat(1, 1, 1, self.n_agents)
-        actions = rearrange(
-            actions, "nstep eplength n_agents 1 -> n_agents nstep eplength 1 1"
-        ).repeat(1, 1, 1, self.n_agents, 1)[:, :, :-1]
-        mask = rearrange(
-            mask, "nstep eplength n_agents -> n_agents nstep eplength 1"
-        ).repeat(1, 1, 1, self.n_agents)
+        # entry [:, :, i, :] being the data of agent i
+        rewards = rewards.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
+        actions = actions.unsqueeze(-2).repeat(1, 1, 1, self.n_agents, 1)[:, :-1]
+        mask = mask.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
         
         critic_mask = mask.clone()
 
@@ -60,12 +53,13 @@ class SEACLearner(ActorCriticLearner):
         # forward pass for each agent using data of all agents!
         self.mac.init_hidden(batch.batch_size * self.n_agents)
         for t in range(batch.max_seq_length - 1):
-            # (n_agents, nstep, n_agents, n_actions)
+            # (batch_size, n_agents, n_agents, n_actions) with [:, i, j, :] being policy probs 
+            # of agent j's policy for data of agent i 
             agent_outs = self.mac.forward(batch, t=t, all_agents=True)
             mac_out.append(agent_outs)
-        # (n_agents, nstep, eplength, n_agents, n_actions) with
-        # [i, :, :, j, :] being the output of agent j for the experience of agent i
-        mac_out = th.stack(mac_out, dim=2)  # Concat over time
+        # (batch_size, eplength, n_agents, n_agents, n_actions) with
+        # [:, :, i, j, :] being the output of agent j for the experience of agent i
+        mac_out = th.stack(mac_out, dim=1)  # Stack over time
 
         # mask out terminated timesteps
         pi = mac_out
@@ -79,12 +73,12 @@ class SEACLearner(ActorCriticLearner):
         for i in range(self.n_agents):
             # log-prob of agent i to take action i in its own experience
             original_log_probs_taken = (
-                log_probs_taken[i, :, :, i].unsqueeze(-1).repeat(1, 1, self.n_agents)
+                log_probs_taken[:, :, i, i].unsqueeze(-1).repeat(1, 1, self.n_agents)
             )
             # IS weight to correct from agent i taken its experience to all other agents taking
             # the experience of agent i
-            is_weights.append(th.exp(log_probs_taken[i] - original_log_probs_taken))
-        is_weights = th.stack(is_weights, dim=0).detach()
+            is_weights.append(th.exp(log_probs_taken[:, :, i] - original_log_probs_taken))
+        is_weights = th.stack(is_weights, dim=2).detach()
 
         if self.args.seac_retrace_is:
             # use retrace IS weights / clip to avoid large weights
@@ -96,8 +90,8 @@ class SEACLearner(ActorCriticLearner):
         # own experience weights: 1
         lambda_matrix = (
             th.eye(self.n_agents, device=batch.device)
-            .reshape(self.n_agents, 1, 1, self.n_agents)
-            .repeat(1, batch.batch_size, batch.max_seq_length - 1, 1)
+            .reshape(1, 1, self.n_agents, self.n_agents)
+            .repeat(batch.batch_size, batch.max_seq_length - 1, 1, 1)
         )
         # others' experience weights: is_weights * seac_lambda
         lambda_matrix += (1 - lambda_matrix) * is_weights_clipped * self.args.seac_lambda
@@ -105,15 +99,15 @@ class SEACLearner(ActorCriticLearner):
         # sanity check / assert
         # for i in range(self.n_agents):
         #     assert th.equal(
-        #         is_weights[i, :, :, i], th.ones_like(is_weights[i, :, :, i])
-        #     ), is_weights[i, :, :, i]
+        #         is_weights[:, :, i, i], th.ones_like(is_weights[:, :, i, i])
+        #     ), is_weights[:, :, i, i]
         #     for j in range(self.n_agents):
         #         if i != j:
         #             assert not th.allclose(
-        #                 is_weights[i, :, :, j], th.ones_like(is_weights[i, :, :, j])
-        #             ), is_weights[i, :, :, j]
+        #                 is_weights[:, :, i, j], th.ones_like(is_weights[:, :, i, j])
+        #             ), is_weights[:, :, i, j]
 
-        # advantages: (n_agents (data shared), nstep, eplength, n_agents
+        # advantages: (batch_size, eplength, n_agents, n_agents)
         advantages, critic_train_stats = self.train_critic_sequential(
             self.critic, self.target_critic, batch, rewards, critic_mask, lambda_matrix
         )
@@ -128,9 +122,9 @@ class SEACLearner(ActorCriticLearner):
         entropy_masks = []
         for i in range(self.n_agents):
             entropies.append(
-                -th.sum(pi[i, :, :, i] * th.log(pi[i, :, :, i] + 1e-10), dim=-1)
+                -th.sum(pi[:, :, i, i] * th.log(pi[:, :, i, i] + 1e-10), dim=-1)
             )
-            entropy_masks.append(mask[i, :, :, i])
+            entropy_masks.append(mask[:, :, i, i])
         entropy = th.stack(entropies, dim=0)
         entropy_mask = th.stack(entropy_masks, dim=0)
         masked_entropy = (entropy * entropy_mask).sum() / entropy_mask.sum()
@@ -205,9 +199,8 @@ class SEACLearner(ActorCriticLearner):
     ):
         # Optimise critic
         with th.no_grad():
-            # (n_agents (data repetition), batch_size, ep_length, n_agents, 1)
-            target_vals = target_critic(batch)
-            target_vals = target_vals.squeeze(-1)
+            # (batch_size, ep_length + 1, n_agents, n_agents, 1)
+            target_vals = target_critic(batch).squeeze(-1)
 
         if self.args.standardise_returns:
             target_vals = target_vals * th.sqrt(self.ret_ms.var) + self.ret_ms.mean
@@ -230,7 +223,7 @@ class SEACLearner(ActorCriticLearner):
             "q_taken_mean": [],
         }
 
-        v = critic(batch)[:, :, :-1].squeeze(-1)
+        v = critic(batch)[:, :-1].squeeze(-1)
         td_error = target_returns.detach() - v
         masked_td_error = td_error * mask * coefs
         loss = (masked_td_error**2).sum() / mask.sum()
@@ -253,30 +246,3 @@ class SEACLearner(ActorCriticLearner):
             (target_returns * mask).sum().item() / mask_elems
         )
         return masked_td_error, running_log
-
-    def nstep_returns(self, rewards, mask, values, nsteps):
-        ep_length = rewards.size(2)
-        nstep_values = th.zeros_like(values[:, :, :-1])
-        for t_start in range(ep_length):
-            nstep_return_t = th.zeros_like(values[:, :, 0])
-            for step in range(nsteps + 1):
-                t = t_start + step
-                if t >= ep_length:
-                    break
-                elif step == nsteps:
-                    nstep_return_t += (
-                        self.args.gamma**step * values[:, :, t] * mask[:, :, t]
-                    )
-                elif t == ep_length - 1 and self.args.add_value_last_step:
-                    nstep_return_t += (
-                        self.args.gamma**step * rewards[:, :, t] * mask[:, :, t]
-                    )
-                    nstep_return_t += (
-                        self.args.gamma ** (step + 1) * values[:, :, t + 1]
-                    )
-                else:
-                    nstep_return_t += (
-                        self.args.gamma**step * rewards[:, :, t] * mask[:, :, t]
-                    )
-            nstep_values[:, :, t_start, :] = nstep_return_t
-        return nstep_values
