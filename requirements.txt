@@ -1,7 +1,6 @@
 absl-py
 attrs
 click
-einops
 gym==0.21.0
 idna==2.7
 imageio
